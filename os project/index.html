@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Animated Banker's Algorithm Visualizer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        body { background-color: #f0f2f5; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .form-control-sm { max-width: 70px; margin: 0 auto; text-align: center; font-weight: 500; }
+        .log-area {
+            background-color: #212529;
+            color: #00ff00;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9rem;
+            height: 300px;
+            overflow-y: auto;
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .log-step { border-bottom: 1px solid #444; padding: 4px 0; }
+        
+        /* Animation Classes */
+        .process-row { transition: background-color 0.5s ease; }
+        .row-checking { background-color: #fff3cd !important; /* Yellowish */ }
+        .row-safe { background-color: #d1e7dd !important; color: #0f5132; /* Greenish */ }
+        
+        #liveAvailableBadge { font-size: 1.1rem; letter-spacing: 1px; }
+    </style>
+</head>
+<body class="bg-light py-4">
+    <div class="container">
+        <header class="mb-4 text-center">
+            <h2>🏛️ Banker's Algorithm <span class="text-primary">Visualizer</span></h2>
+            <p class="small text-muted">Deadlock Avoidance with Animated Execution</p>
+        </header>
+
+        <div class="row g-3">
+            <div class="col-lg-5">
+                 <div class="card mb-3">
+                    <div class="card-header bg-white fw-bold">1. System Resources</div>
+                    <div class="card-body">
+                        <label class="form-label small">Total Resources Vector (e.g., A B C)</label>
+                        <div class="input-group">
+                            <input type="text" id="totalResources" class="form-control font-monospace" placeholder="10 5 7" value="10 5 7">
+                            <button class="btn btn-primary" id="initBtn" onclick="initTable()">Set</button>
+                        </div>
+                        <div class="form-text">Space-separated integers.</div>
+                    </div>
+                </div>
+
+                 <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">2. Process Data</span>
+                        <div>
+                             <button class="btn btn-sm btn-outline-secondary me-1" id="demoBtn" onclick="loadDemo()">Load Demo</button>
+                             <button class="btn btn-sm btn-outline-success" id="addBtn" onclick="addProcessRow()">+ Add</button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-bordered text-center align-middle mb-0" id="inputTable">
+                                <thead class="table-light">
+                                    <tr id="tableHead"></tr>
+                                </thead>
+                                <tbody id="tableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                     <div class="card-footer bg-white p-3">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-primary fw-bold" id="startBtn" onclick="startSimulation()">▶ Start Animation</button>
+                            <button class="btn btn-danger fw-bold" id="stopBtn" onclick="stopSimulation()" style="display:none;">■ Stop</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-7">
+                <div class="card h-100">
+                    <div class="card-header bg-white fw-bold d-flex justify-content-between">
+                        <span>3. Live Execution Output</span>
+                        <span id="simulationStatus" class="badge bg-secondary">Idle</span>
+                    </div>
+                    <div class="card-body">
+                        
+                        <div class="mb-3 text-center">
+                            <h6 class="text-muted mb-1">Current Available Resources (Work Vector)</h6>
+                            <span id="liveAvailableBadge" class="badge bg-dark p-2">Not Started</span>
+                        </div>
+
+                        <div class="row">
+                             <div class="col-md-8">
+                                <h6>Execution Log:</h6>
+                                <div class="log-area shadow-inset" id="logArea">Your simulation log will appear here...</div>
+                            </div>
+                             <div class="col-md-4">
+                                 <h6>Final Need Matrix:</h6>
+                                 <div class="table-responsive border rounded" style="max-height: 300px; overflow-y: auto;">
+                                    <table class="table table-sm table-striped mb-0" id="needTable">
+                                        <tbody class="text-muted small"><tr><td class="p-2">Calculated after simulation.</td></tr></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="resultAlert" class="alert mt-3 text-center fw-bold" style="display: none;"></div>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let resourceCount = 0;
+        let resourceNames = [];
+        // Simulation State Object
+        let simState = {
+            running: false,
+            timerId: null,
+            processes: [], alloc: [], max: [], need: [], finish: [],
+            work: [], safeSeq: [],
+            numProcs: 0, countFinished: 0, checkIndex: 0,
+            noProgressCounter: 0 // To detect deadlock during animation cycling
+        };
+
+        function initTable() {
+            const resInput = document.getElementById('totalResources').value.trim();
+            if(!resInput) { alert("Please enter total resources"); return; }
+            
+            const resParts = resInput.split(/\s+/);
+            resourceCount = resParts.length;
+            resourceNames = resParts.map((_, i) => String.fromCharCode(65 + i)); // A, B, C...
+            
+            const thead = document.getElementById('tableHead');
+            // Build nice headers
+            let html = '<th>Proc</th>';
+            html += `<th colspan="${resourceCount}" class="table-primary bg-opacity-25">Allocation</th>`;
+            html += `<th colspan="${resourceCount}" class="table-warning bg-opacity-25">Max Demand</th>`;
+            html += '<th></th>';
+            thead.innerHTML = html;
+            
+            document.getElementById('tableBody').innerHTML = '';
+            addProcessRow(); 
+            resetUI();
+        }
+
+        function addProcessRow(pName = null, alloc = [], max = []) {
+            const tbody = document.getElementById('tableBody');
+            const idx = tbody.children.length;
+            const name = pName || `P${idx}`;
+            const tr = document.createElement('tr');
+            tr.className = 'process-row';
+            tr.id = `pRow-${idx}`;
+            
+            let html = `<td><input class="form-control form-control-sm fw-bold" value="${name}" readonly></td>`;
+            
+            // Alloc Inputs
+            for(let i=0; i<resourceCount; i++) {
+                html += `<td><input type="number" min="0" class="form-control form-control-sm alloc-inp" placeholder="${resourceNames[i]}" value="${alloc[i]??0}"></td>`;
+            }
+             // Max Inputs
+             for(let i=0; i<resourceCount; i++) {
+                html += `<td><input type="number" min="0" class="form-control form-control-sm max-inp" placeholder="${resourceNames[i]}" value="${max[i]??0}"></td>`;
+            }
+            html += `<td><button class="btn btn-link text-danger p-0" onclick="this.closest('tr').remove()">×</button></td>`;
+            tr.innerHTML = html;
+            tbody.appendChild(tr);
+        }
+
+        function loadDemo() {
+            document.getElementById('totalResources').value = "10 5 7";
+            initTable();
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            // Standard Banker's Demo Data
+            const demoData = [
+                {n:'P0', a:[0,1,0], m:[7,5,3]}, {n:'P1', a:[2,0,0], m:[3,2,2]},
+                {n:'P2', a:[3,0,2], m:[9,0,2]}, {n:'P3', a:[2,1,1], m:[2,2,2]},
+                {n:'P4', a:[0,0,2], m:[4,3,3]}
+            ];
+            demoData.forEach(d => addProcessRow(d.n, d.a, d.m));
+            resetUI();
+        }
+
+        // =========================================
+        // ANIMATION & ALGORITHM LOGIC
+        // =========================================
+
+        function startSimulation() {
+            resetUI();
+            if(!parseAndValidateInput()) return; // Stop if validation fails
+
+            simState.running = true;
+            toggleControls(false);
+            updateStatusBadge("Running...", "warning");
+            log("Starting Banker's Algorithm Simulation...", "text-info fw-bold");
+            log(`Initial Available Resources: [ ${simState.work.join(', ')} ]`, "text-warning");
+            updateLiveAvailable(simState.work);
+
+            // Start the animation loop
+            simState.checkIndex = 0;
+            simState.noProgressCounter = 0;
+            runSimulationStep();
+        }
+
+        function runSimulationStep() {
+            if (!simState.running) return;
+
+            // Check if completion condition met
+            if (simState.countFinished === simState.numProcs) {
+                finishSimulation(true);
+                return;
+            }
+            // Deadlock detection condition for animation loop
+            if (simState.noProgressCounter >= simState.numProcs) {
+                 finishSimulation(false);
+                 return;
+            }
+
+            // Find next unfinished process cyclically
+            let currentPIdx = simState.checkIndex % simState.numProcs;
+            
+            if (simState.finish[currentPIdx]) {
+                simState.checkIndex++;
+                // Skip finished ones instantly
+                runSimulationStep(); 
+                return;
+            }
+
+            // --- Visual Step 1: Highlight Checking ---
+            highlightRow(currentPIdx, 'checking');
+            log(`Checking ${simState.processes[currentPIdx]}... (Need: [${simState.need[currentPIdx]}] ≤ Work: [${simState.work}])?`);
+
+            // Delay for visual effect before actual check
+            simState.timerId = setTimeout(() => {
+                // --- Perform the Safety Check ---
+                let canAllocate = true;
+                for (let j = 0; j < resourceCount; j++) {
+                    if (simState.need[currentPIdx][j] > simState.work[j]) {
+                        canAllocate = false;
+                        break;
+                    }
+                }
+
+                if (canAllocate) {
+                    // --- Visual Step 2: Success & Execution ---
+                    log(`👉 Yes. Executing ${simState.processes[currentPIdx]}. Check logs`, "text-success");
+                    highlightRow(currentPIdx, 'safe');
+                    
+                    // Simulate execution time, then update resources
+                    simState.timerId = setTimeout(() => {
+                        // Update internal state
+                        for (let k = 0; k < resourceCount; k++) simState.work[k] += simState.alloc[currentPIdx][k];
+                        simState.finish[currentPIdx] = true;
+                        simState.safeSeq.push(simState.processes[currentPIdx]);
+                        simState.countFinished++;
+                        
+                        // Update UI
+                        log(`✔ ${simState.processes[currentPIdx]} finished. Resources returned.`, "text-muted small");
+                        log(`New Available Work: [ ${simState.work.join(', ')} ]`, "text-warning fw-bold");
+                        updateLiveAvailable(simState.work);
+                        
+                        // Reset counters and move next
+                        simState.noProgressCounter = 0; 
+                        simState.checkIndex++;
+                        // Pause before next step
+                        simState.timerId = setTimeout(runSimulationStep, 1500);
+                    }, 1000);
+
+                } else {
+                    // --- Visual Step 2: Failure to Allocate ---
+                    log(`👉 No. ${simState.processes[currentPIdx]} must wait.`, "text-danger");
+                    highlightRow(currentPIdx, ''); // Remove highlight
+                    
+                    simState.noProgressCounter++;
+                    simState.checkIndex++;
+                    // Pause shorter before next step
+                    simState.timerId = setTimeout(runSimulationStep, 800);
+                }
+            }, 1000); // Wait 1s after highlighting before checking
+        }
+
+        function finishSimulation(isSafe) {
+            simState.running = false;
+            toggleControls(true);
+            const alertBox = document.getElementById('resultAlert');
+            alertBox.style.display = 'block';
+
+            if (isSafe) {
+                updateStatusBadge("Safe State", "success");
+                alertBox.className = "alert alert-success fw-bold";
+                alertBox.innerHTML = `✅ System is Safe!<br>Safe Sequence: ${simState.safeSeq.join(' ➔ ')}`;
+                log("Simulation Ended: Safe sequence found.", "text-success fw-bold");
+            } else {
+                updateStatusBadge("Deadlock", "danger");
+                alertBox.className = "alert alert-danger fw-bold";
+                alertBox.innerHTML = "❌ Unsafe State! Deadlock Detected.";
+                 log("Simulation Ended: No safe sequence exists.", "text-danger fw-bold");
+            }
+            renderNeedTable();
+        }
+
+        function stopSimulation() {
+            clearTimeout(simState.timerId);
+            simState.running = false;
+            log("Simulation stopped by user.", "text-danger");
+            updateStatusBadge("Stopped", "secondary");
+            toggleControls(true);
+            document.querySelectorAll('.process-row').forEach(r => r.classList.remove('row-checking'));
+        }
+
+
+        // =========================================
+        // HELPERS (Parsing, UI Updates)
+        // =========================================
+
+        function parseAndValidateInput() {
+            const totalResStr = document.getElementById('totalResources').value.trim().split(/\s+/).map(Number);
+            const rows = document.querySelectorAll('#tableBody tr');
+            
+            // Reset State
+            simState.processes = []; simState.alloc = []; simState.max = []; 
+            simState.need = []; simState.finish = []; simState.safeSeq = [];
+            simState.numProcs = rows.length; simState.countFinished = 0;
+            let totalAllocated = new Array(resourceCount).fill(0);
+
+            if (simState.numProcs === 0) { alert("Please add processes."); return false; }
+
+            try {
+                rows.forEach((row, i) => {
+                    simState.processes.push(row.querySelector('input[readonly]').value);
+                    const aInp = Array.from(row.querySelectorAll('.alloc-inp')).map(e => Number(e.value));
+                    const mInp = Array.from(row.querySelectorAll('.max-inp')).map(e => Number(e.value));
+                    
+                    // Validation 1: Max >= Alloc
+                    for(let j=0; j<resourceCount; j++) {
+                        if(mInp[j] < aInp[j]) throw new Error(`Error in P${i}: Max demand cannot be less than Allocation for Resource ${resourceNames[j]}.`);
+                         totalAllocated[j] += aInp[j];
+                    }
+                    simState.alloc.push(aInp);
+                    simState.max.push(mInp);
+                    simState.need.push(mInp.map((m, k) => m - aInp[k]));
+                    simState.finish.push(false);
+                });
+
+                 // Validation 2: Total Alloc <= Total System Res
+                 simState.work = [...totalResStr];
+                 for(let j=0; j<resourceCount; j++) {
+                     simState.work[j] -= totalAllocated[j];
+                     if(simState.work[j] < 0) throw new Error(`Error: Total allocated for Resource ${resourceNames[j]} exceeds total system resources.`);
+                 }
+            } catch (e) {
+                alert(e.message);
+                return false;
+            }
+            return true;
+        }
+
+        function log(msg, classes = "") {
+            const logArea = document.getElementById('logArea');
+            if(logArea.textContent === 'Your simulation log will appear here...') logArea.innerHTML = '';
+            logArea.innerHTML += `<div class="log-step ${classes}">${msg}</div>`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function highlightRow(pidx, type) {
+            // Clear previous checking highlights
+            document.querySelectorAll('.process-row').forEach(r => r.classList.remove('row-checking'));
+            const row = document.getElementById(`pRow-${pidx}`);
+            if(row && type) row.classList.add(type === 'checking' ? 'row-checking' : 'row-safe');
+        }
+
+        function updateLiveAvailable(arr) {
+            document.getElementById('liveAvailableBadge').textContent = `[ ${arr.join(', ')} ]`;
+        }
+
+        function updateStatusBadge(text, bgClass) {
+            const badge = document.getElementById('simulationStatus');
+            badge.textContent = text;
+            badge.className = `badge bg-${bgClass}`;
+        }
+
+        function toggleControls(enable) {
+            document.getElementById('startBtn').style.display = enable ? 'block' : 'none';
+            document.getElementById('stopBtn').style.display = enable ? 'none' : 'block';
+            document.getElementById('initBtn').disabled = !enable;
+            document.getElementById('demoBtn').disabled = !enable;
+            document.getElementById('addBtn').disabled = !enable;
+            document.querySelectorAll('input').forEach(i => i.readOnly = !enable);
+            // Keep process names readonly always
+            document.querySelectorAll('#tableBody input[readonly]').forEach(i => i.readOnly = true);
+        }
+
+        function resetUI() {
+            document.getElementById('logArea').innerHTML = 'Your simulation log will appear here...';
+            document.getElementById('resultAlert').style.display = 'none';
+            updateStatusBadge("Idle", "secondary");
+            document.getElementById('liveAvailableBadge').textContent = "Not Started";
+            document.querySelectorAll('.process-row').forEach(r => r.className = 'process-row');
+            document.getElementById('needTable').innerHTML = '<tbody class="text-muted small"><tr><td class="p-2">Calculated after simulation.</td></tr></tbody>';
+        }
+
+        function renderNeedTable() {
+            let html = '<thead><tr><th>Proc</th><th>Need Vector</th></tr></thead><tbody>';
+            simState.processes.forEach((p, i) => {
+                html += `<tr><td>${p}</td><td class="font-monospace">[ ${simState.need[i].join(', ')} ]</td></tr>`;
+            });
+            html += "</tbody>";
+            document.getElementById('needTable').innerHTML = html;
+        }
+
+        // Init on load
+        window.onload = initTable;
+    </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+
+    body { background-color: #f8f9fa; }
+    .card { border: none; border-radius: 12px; }
+    .form-control-sm { max-width: 80px; margin: 0 auto; text-align: center; }
+    .badge-process { font-size: 1rem; padding: 10px 20px; border-radius: 50px; margin: 5px; }
+    .log-step { border-bottom: 1px solid #444; padding: 5px 0; }
+    .log-step:last-child { border-bottom: none; }
